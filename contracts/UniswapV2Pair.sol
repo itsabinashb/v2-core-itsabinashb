@@ -233,7 +233,7 @@ contract UniswapV2Pair is IUniswapV2Pair, UniswapV2ERC20 {
 
         /**
         totalSupply = 0 means there is no liquidity, and NO LIQUIDITY MEANS NO SWAP CAN POSSIBLE, AND NO SWAP MEANS NO reserve0 and reserve1. 
-        In that case liquidity(√k) can not be √(reserve0 * reserve1) because both are 0 now. So liquidity is calculated with passed amount, 
+        In that case liquidity(√k) can not be √(reserve0 * reserve1) because both are 0 now. So liquidity is calculated with passed amount for liquidity by LPs, see in nastspec.
         i.e amount0 and amount1. So, for the first liquidity deposit, √k = √(amount0 * amount1). 
          */
         if (_totalSupply == 0) {
@@ -268,16 +268,30 @@ contract UniswapV2Pair is IUniswapV2Pair, UniswapV2ERC20 {
 
         /**
         (1) Why liquidity is calculated like this?
+        => Because to burn LP token liquidity providers sends LP tokens to pair contract through router. See this lines fro removeLiquidity() of router:
+            address pair = UniswapV2Library.pairFor(factory, tokenA, tokenB);
+            IUniswapV2Pair(pair).transferFrom(msg.sender, pair, liquidity);
+            So, balanceOf[address(this)] returns how much LP tokens were sent in this contract to burn. Later it is burned.
+
         (2) Why amounts are fetched like that?
+        => See below. 
          */
 
         uint liquidity = balanceOf[address(this)];
 
         bool feeOn = _mintFee(_reserve0, _reserve1);
-        uint _totalSupply = totalSupply; // gas savings, must be defined here since totalSupply can update in _mintFee
-        amount0 = liquidity.mul(balance0) / _totalSupply; // using balances ensures pro-rata distribution
-        amount1 = liquidity.mul(balance1) / _totalSupply; // using balances ensures pro-rata distribution
 
+        // After burning LP tokens the to be transferred amount depends on what percentage of total supplied LP tokens are burned. So if totalSupply is 1000 and I want to
+        // burn 100 then i am burning 10% of total supplied LP token, for that reason I will get 10% of token0 & token1 balance of this pair contract. So it is like if 
+        // totalSupply 1000 and i want to burn 100 then i have 10% ownership of the token amounts. 
+        // Full ex: assume balance0 = 150, balance1 = 40, totalSupply = 1000, want to burn = 100. 
+        // amount0 = liquidity*balance0/totalSupply = 100 * 150 / 1000 = 15 
+        // amount1 = liquidity*balance1/totalSupply = 100 * 40 / 1000 = 4 
+        // So, 15 token0 and 4 token1 will be transferred to LP. 
+        uint _totalSupply = totalSupply; 
+        amount0 = liquidity.mul(balance0) / _totalSupply; 
+        amount1 = liquidity.mul(balance1) / _totalSupply; 
+        
         require(amount0 > 0 && amount1 > 0, 'UniswapV2: INSUFFICIENT_LIQUIDITY_BURNED');
         _burn(address(this), liquidity);
         _safeTransfer(_token0, to, amount0);
